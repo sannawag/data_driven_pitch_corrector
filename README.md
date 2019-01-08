@@ -26,6 +26,7 @@ in Proceedings of the IEEE International Conference on Acoustics, Speech, and Si
 # Running the program
 
 The main program is rnn.py. It can be run as follows:
+
 `python rnn.py --learning_rate 0.000005 --resume False --num_layers 1 --small_dataset True`
 
 Three pre-trained models are available in the pytorch_checkpoints_and_models directory. Please check the
