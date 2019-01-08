@@ -1,0 +1,9 @@
+-r ../requirements.txt
+bokeh
+scikit-learn
+torch
+torchvision
+psutil
+tqdm
+nonechucks
+future
