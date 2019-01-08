@@ -7,7 +7,7 @@ applied along a continuous scale and are trained here based on examples of in-tu
 pre-processes the data by detecting the note onsets and offsets in the vocals and randomly shifting 
 every note while storing the shift in cents as ground truth for the program output. 
 
-The paper related to this program program, along with audio examples, is available [here](http://homes.sice.indiana.edu/scwager/deepautotuner.html)
+The paper related to this program program, along with audio examples, is available [here](http://homes.sice.indiana.edu/scwager/deepautotuner.html).
 
 # Dataset
 
@@ -26,7 +26,7 @@ in Proceedings of the IEEE International Conference on Acoustics, Speech, and Si
 # Running the program
 
 The main program is rnn.py. It can be run as follows:
-python rnn.py --learning_rate 0.000005 --resume False --num_layers 1 --small_dataset True
+`python rnn.py --learning_rate 0.000005 --resume False --num_layers 1 --small_dataset True`
 
 Three pre-trained models are available in the pytorch_checkpoints_and_models directory. Please check the
 README in the directory for more details on how to import them into the program. 
