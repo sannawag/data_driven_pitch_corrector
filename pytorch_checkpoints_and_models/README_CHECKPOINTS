@@ -1,0 +1,48 @@
+This directory contains PyTorch checkpoints for three pre-trained models. The configurations are described below.
+
+Model 55:
+python rnn.py --learning_rate 0.000005 --resume False --num_layers 1 --small_dataset False --report_step 500 --max_norm 100.0 --extension _55
+Two channels of input, with MIDI note parsing and global median thresholding
+48 filters to map to one octave
+conv1: 2, 128, 5, (1,2), 2
+conv2: 128, 64, 5, (1,2), 2
+conv3: 64, 64, 3, 2, 1
+conv4: 64, 64, 3, 1, 1
+conv5: 64, 8, (48,3), 1, (24,1)
+conv6: 8, 1, 1, 1, 0
+gru: 289, 64, 1 layer
+linear: 64, 1 that takes as input the last RNN output
+relu after every conv layer
+predict one output per note
+
+Model 54:
+python rnn.py --learning_rate 0.00005 --resume False --num_layers 1 --small_dataset False --report_step 500 --max_norm 100.0 --extension _54
+Three channels of input
+pYIN note parsing and local median thresholding
+48 filters to map to one octave
+conv1: 3, 128, 5, (1,2), 2
+conv2: 128, 64, 5, (1,2), 2
+conv3: 64, 64, 3, 2, 1
+conv4: 64, 64, 3, 1, 1
+conv5: 64, 8, (48,3), 1, (24,1)
+conv6: 8, 1, 1, 1, 0
+gru: 289, 64, 1 layer
+linear: 64, 1 that takes as input the last RNN output
+relu after every conv layer
+predict one output per note
+
+Model 51:
+python rnn.py --learning_rate 0.00005 --resume False --num_layers 1 --small_dataset False --report_step 500 --max_norm 100.0 --extension _51
+Three channels of input
+48 filters to map to one octave+
+conv1: 3, 128, 5, (1,2), 2
+conv2: 128, 64, 5, (1,2), 2
+conv3: 64, 64, 3, 2, 1
+conv4: 64, 64, 3, 1, 1
+conv5: 64, 8, (48,3), 1, (24,1)
+conv6: 8, 1, 1, 1, 0
+gru: 289, 64, 1 layer
+linear: 64, 1 that takes as input the last RNN output
+relu after every conv layer
+predict one output per note
+
