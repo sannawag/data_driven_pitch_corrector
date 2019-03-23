@@ -16,7 +16,7 @@ for the paper and how to access it via the Stanford DAMP can be found [here](htt
 
 Other data with the same format can also be used to populate the directories in Intonation/. The data needs to have wav files of the separate vocals and backing tracks and a frame-wise pitch tracking analysis of the vocals. pYIN pitch analysis has the high
 resolution required for this program, where corrections are in cents. The frame and hop lengths for all
-analyses must be the same and is defined in globals.py. The file intonation.csv requires a list of the file names of the vocal and backing track file names without the ".wav" extension. Variable boundary_arr_id in rnn.py should be changed accordingly. This variable determines the split between training and validation data. 
+analyses must be the same and is defined in globals.py. One option for generating the pYIN analysis is to use Sonic Annotator with a Vamp plugin, as described in this [video](https://youtu.be/ojtkaoV0N48). The output of this program has unevenly spaced timestamps: interpolate_pyin.py will make these equal and can be run before rnn.py. The file intonation.csv requires a list of the file names of the vocal and backing track file names without the ".wav" extension. Variable boundary_arr_id in rnn.py should be changed accordingly. This variable determines the split between training and validation data. 
 
 More information on pitch tracking can be found at:
 
