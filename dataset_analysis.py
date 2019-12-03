@@ -28,11 +28,12 @@ import librosa
 import numpy as np
 import os
 import pickle
+import scipy.io.wavfile
 
 
 base_directory = os.environ.get("DATA_ROOT", "/share/project/scwager/autotune_fa18_data/")
-clustering_pitch_dir = "clustering_data_sanna/vocals_pitch_pyin"
-intonation_pitch_dir = "Intonation/vocals_pitch_pyin"
+clustering_pitch_dir = "clustering_data_sanna/pyin"
+intonation_pitch_dir = "Intonation/pyin"
 clustering_midi_dir = "clustering_data_sanna/vocals_midi"
 intonation_midi_dir = "Intonation/vocals_midi"
 analysis_dir = "analysis"
@@ -76,44 +77,46 @@ def dtw(midi_hz, measured_hz, performance_key, plot=False, plot_dir="./"):
     return midi_hz, measured_hz, wp
 
 
-def get_audio(filepath):
+def get_audio(filepath, restrict=restrict_range, use_librosa=False, normalize=True):
     """
     Reads audio from disk and normalize
     :param filepath: pitch shifted wav file path
     :return:
     """
-
-    audio, fs = librosa.load(path=filepath, sr=22050)
-    latency_samples = int(fs / 1000 * 10)  # assume latency is 10 ms, typical for iOS
-    latency_samples *= 2  # assume the audio was treated differently when put into the Intonation dataset than
-    # when processed at Smule
-    # retrieve audio and adjust for latency
-    audio = audio[latency_samples:]
+    try:
+        audio, fs = librosa.load(path=filepath, sr=22050)
+    except Exception as e:
+        fs, audio_ro = scipy.io.wavfile.read(filepath)
+        audio = np.copy(audio_ro) / 32767
+    if fs != 22050:
+        print("incorrect fs")
+        return None
     # frame-wise calculation
-    if restrict_range:
+    if restrict:
         start = start_sec * fs
         end = end_sec * fs
         audio = np.array(audio[start:end], dtype=np.float32)
-    # normalize
-    audio = (cqt_params['normalizing_constant'] * audio) / np.std(audio[np.abs(audio > 0.00001)])
+    if normalize is True:
+        audio = (cqt_params['normalizing_constant'] * audio) / np.std(audio[np.abs(audio > 0.00001)])
     return audio
 
 
-def get_cqt(filepath):
+def get_cqt(filepath, restrict=restrict_range, use_librosa=False):
     """
     Computes the STFT of the de-tuned audio, read from disk
     :param filepath: pitch shifted wav file path
     :return: CQT
     """
-
-    audio, fs = librosa.load(path=filepath, sr=22050)
-    latency_samples = int(fs / 1000 * 10)  # assume latency is 10 ms, typical for iOS
-    latency_samples *= 2  # assume the audio was treated differently when put into the Intonation dataset than
-    # when processed at Smule
-    # retrieve audio and adjust for latency
-    audio = audio[latency_samples:]
+    try:
+        audio, fs = librosa.load(path=filepath, sr=22050)
+    except Exception as e:
+        fs, audio_ro = scipy.io.wavfile.read(filepath)
+        audio = np.copy(audio_ro) / 32767
+    if fs != 22050:
+        print("incorrect fs")
+        return None
     # frame-wise calculation
-    if restrict_range:
+    if restrict:
         start = start_sec * fs
         end = end_sec * fs
         audio = np.array(audio[start:end], dtype=np.float32)
@@ -125,20 +128,22 @@ def get_cqt(filepath):
     return cqt
 
 
-def get_stft(filepath):
+def get_stft(filepath, restrict=restrict_range):
     """
     Computes the STFT of the de-tuned audio, read from disk
     :param filepath: pitch shifted wav file path
     :return: CQT
     """
-    audio, fs = librosa.load(path=filepath, sr=22050)
-    latency_samples = int(fs / 1000 * 10)  # assume latency is 10 ms, typical for iOS
-    latency_samples *= 2  # assume the audio was treated differently when put into the Intonation dataset than
-    # when processed at Smule
-    # retrieve audio and adjust for latency
-    audio = audio[latency_samples:]
+    try:
+        audio, fs = librosa.load(path=filepath, sr=22050)
+    except Exception as e:
+        fs, audio_ro = scipy.io.wavfile.read(filepath)
+        audio = np.copy(audio_ro) / 32767
+    if fs != 22050:
+        print("incorrect fs")
+        return None
     # frame-wise calculation
-    if restrict_range:
+    if restrict:
         start = start_sec * fs
         end = end_sec * fs
         audio = np.array(audio[start:end], dtype=np.float32)

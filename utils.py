@@ -2,25 +2,33 @@
 
 """Miscellaneous utils for autotune research"""
 
-
 from __future__ import print_function
 
 __version__ = 2
 
-from globals import *
 
 import argparse
 import bokeh.plotting as bplt
+import calendar
+import csv
 import gc
+from interpolate_pyin import sec_to_frame
+import librosa
 import numpy as np
 from numpy.lib.stride_tricks import as_strided
 import os
-import psutil
-import sys
-import torch
-
-import subprocess
 import pprint
+import psutil
+import subprocess
+import sys
+import time
+import torch
+import traceback
+
+# imports from parallel packages
+from globals import *
+from psola import psola_shift_pitch
+import dataset_analysis
 
 
 def buffer(y, frame_length, hop_length):
@@ -32,51 +40,6 @@ def buffer(y, frame_length, hop_length):
     y_frames = as_strided(y, shape=(frame_length, n_frames),
                           strides=(y.itemsize, hop_length * y.itemsize))
     return y_frames
-
-
-def query_performances_from_string(query_str, environment="production"):
-    """
-    :param query: MK query string
-    :param environment: Smule environment
-    :return: List of performances
-    """
-    print('Running query...')
-    performance_keys = query.query_performance_keys(None, query_str)
-    all_performances = query.performance(performance_keys, environment=environment)
-    return all_performances
-
-
-def get_performances_from_keys(key_list, environment="production"):
-    """
-    :param key_list: list of performance keys as strings
-    :param environment: Smule environment
-    :return: List of performances
-    """
-    all_performances = query.performance(key_list, environment=environment)
-    return all_performances
-
-
-def load_vocals_and_backing_track(perf, fs=global_fs, restrict_range=restrict_range):
-    """
-    Load audio, remove latency samples, and align solo and back
-    :param perf: Performance
-    :param fs: sampling rate applied to audio
-    :param restrict_range: keep only audio from start_sec to end_sec
-    :return: solo and backing track in raw audio format
-    """
-    solo, fs, fxp = perf.track.vocal.get_audio(channels=1, sampling_rate=global_fs)
-    back, fs_back, fxp = perf.song.background.get_audio(channels=1, sampling_rate=global_fs)
-    solo = solo[int(perf.track.latency_samples):]
-    back = back[int(perf.track.latency_samples):]
-    if restrict_range:  # time range of audio written to disk (same as pyin input)
-        start, end = int(start_sec * fs), int(end_sec * fs)
-        solo = solo[start:end]
-        back = back[start:end]
-    if len(solo) != len(back):
-        min_length = min(len(solo), len(back))
-        solo = solo[:min_length]
-        back = back[:min_length]
-    return solo, back
 
 
 def reset_directory(directory, empty=False):
@@ -92,6 +55,17 @@ def reset_directory(directory, empty=False):
         for item in os.listdir(directory):
             if not os.path.isdir(os.path.join(directory, item)):
                 os.remove(os.path.join(directory, item))
+
+
+def parse_note_csv(fpath):
+    with open(fpath) as csv_file:
+        csv_reader = csv.reader(csv_file, delimiter=',')
+        notes = []
+        for row in csv_reader:
+            start = np.float32(row[0])
+            duration = np.float32(row[2])
+            notes.append([sec_to_frame(start), sec_to_frame(start + duration)])
+    return notes
 
 
 def clear_cache_brute_force():
@@ -309,6 +283,7 @@ def print_param_sizes(model):
                 print(data.shape)
         child_counter += 1
 
+
 def print_params(model):
     child_counter = 0
     for child in model.children():
@@ -325,3 +300,171 @@ def print_params(model):
                       "max", np.max(data),
                       "mean", np.mean(data))
         child_counter += 1
+
+
+def save_outputs(results_numpy_dir, results_plot_dir, epoch, perf, outputs, labels_tensor, original_boundaries,
+                 training, logger, pyin_dir=pyin_directory):
+    """Save predictions and labels for one shift of every song in batch"""
+    try:
+        f_start = "training" if training is True else "testing"
+        ts = str(calendar.timegm(time.gmtime()))
+        bplt.output_file(os.path.join(
+                results_plot_dir, f_start + "_epoch_" + str(epoch) + "_" + ts + "_" + perf + ".html"))
+
+        # load the original, in-tune pitch track
+        pitch_track = np.load(os.path.join(pyin_dir, perf + ".npy"))
+        frames = len(pitch_track)
+
+        # convert to shape < notes, shifts >
+        outputs = np.squeeze(outputs)
+        labels = np.squeeze(labels_tensor)
+
+        # plot the shifts after applying them to the original frame indices
+        frame_outputs_0 = np.zeros(frames)
+        frame_labels_0 = np.zeros(frames)
+        frame_outputs_5 = np.zeros(frames)
+        frame_labels_5 = np.zeros(frames)
+        for i in range(len(labels[:, 0])):
+            frame_outputs_0[original_boundaries[i, 0]: original_boundaries[i, 1]] += outputs[i, 0]
+            frame_labels_0[original_boundaries[i, 0]: original_boundaries[i, 1]] += labels[i, 0]
+            frame_outputs_5[original_boundaries[i, 0]: original_boundaries[i, 1]] += outputs[i, 5]
+            frame_labels_5[original_boundaries[i, 0]: original_boundaries[i, 1]] += labels[i, 5]
+        s1 = bplt.figure(title="Pitch shifts: ground truth versus predictions shift 0")
+        s1.line(np.arange(len(frame_labels_0)), frame_labels_0, color="red")
+        s1.line(np.arange(len(frame_outputs_0)), frame_outputs_0, color="blue")
+        s2 = bplt.figure(title="Pitch shifts: ground truth versus predictions shift 5")
+        s2.line(np.arange(len(frame_labels_5)), frame_labels_5, color="red")
+        s2.line(np.arange(len(frame_outputs_5)), frame_outputs_5, color="blue")
+
+        # shift pitch to get the de-tuned input to the neural net, then apply correction (negative of learned shift)
+        shifted_pitch_track_0 = np.copy(pitch_track)
+        corrected_pitch_track_0 = np.copy(pitch_track)
+        shifted_pitch_track_5 = np.copy(pitch_track)
+        corrected_pitch_track_5 = np.copy(pitch_track)
+        for i in range(len(labels[:, 0])):
+            shifted_pitch_track_0[original_boundaries[i, 0]: original_boundaries[i, 1]] *= \
+                        np.power(2, max_semitone * labels[i, 0] / 12.0)
+            corrected_pitch_track_0[original_boundaries[i, 0]: original_boundaries[i, 1]] *= \
+                        np.power(2, max_semitone * (labels[i, 0] - outputs[i, 0]) / 12.0)
+            shifted_pitch_track_5[original_boundaries[i, 0]: original_boundaries[i, 1]] *= \
+                        np.power(2, max_semitone * labels[i, 5] / 12.0)
+            corrected_pitch_track_5[original_boundaries[i, 0]: original_boundaries[i, 1]] *= \
+                        np.power(2, max_semitone * (labels[i, 5] - outputs[i, 5]) / 12.0)
+        s3 = bplt.figure(title="Original input versus de-tuned input before and after pitch correction shift 0",
+                         y_range=(np.min(pitch_track[pitch_track > 10] - 50), np.max(pitch_track) + 50))
+        s3.line(np.arange(frames), pitch_track, color='black')
+        s3.line(np.arange(frames), shifted_pitch_track_0, color='red')
+        s3.line(np.arange(frames), corrected_pitch_track_0, color='green')
+        s4 = bplt.figure(title="Original input versus de-tuned input before and after pitch correction shift 5",
+                         y_range=(np.min(pitch_track[pitch_track > 10] - 50), np.max(pitch_track) + 50))
+        s4.line(np.arange(frames), pitch_track, color='black')
+        s4.line(np.arange(frames), shifted_pitch_track_5, color='red')
+        s4.line(np.arange(frames), corrected_pitch_track_5, color='green')
+
+        bplt.save(bplt.gridplot([s1], [s2], [s3], [s4]))
+
+        np.save(os.path.join(
+            results_numpy_dir, f_start + "_epoch_" + str(epoch) + "_outputs" + "_" + perf), outputs)
+        np.save(os.path.join(
+            results_numpy_dir, f_start + "_epoch_" + str(epoch) + "_labels" + "_" + perf), labels)
+    except Exception as e:
+        tb = traceback.format_exc()
+        logger.info("exception in save_outputs {0}: {1} skipping song {2}".format(e, tb, perf))
+        return
+
+
+def synthesize_result(output_dir, perf, arr, outputs, labels_tensor, original_boundaries, logger,
+                      pyin_dir=pyin_directory):
+    test_mix_fpath = os.path.join(output_dir, "test_mix_" + perf + ".wav")
+    shifted_mix_fpath = os.path.join(output_dir, "shifted_mix_" + perf + ".wav")
+    corrected_mix_fpath = os.path.join(output_dir, "corrected_mix_" + perf + ".wav")
+    # load the original, in-tune pitch track
+    pitch_track = np.load(os.path.join(pyin_dir, perf + ".npy"))
+    frames = len(pitch_track)
+
+    # load the original audio and write mixture to file
+    vocal_audio = dataset_analysis.get_audio(os.path.join(vocals_directory, perf + ".wav"))
+    backing_audio = dataset_analysis.get_audio(os.path.join(backing_tracks_directory, arr + ".wav"), use_librosa=True)
+    if arr == 'silent_backing_track':
+        logger.info('using silent backing track')
+        backing_audio *= 0
+
+    min_len = min([len(backing_audio), len(vocal_audio)])
+    test_mix = vocal_audio[:min_len] + backing_audio[:min_len]  # check that the audio is correct
+    # test_mix = test_mix[:30 * global_fs]
+    librosa.output.write_wav(test_mix_fpath, test_mix, sr=global_fs, norm=True)
+
+    # convert autotuner outputs to shape < notes, shifts >
+    outputs = np.squeeze(outputs)
+    labels = np.squeeze(labels_tensor)
+    correction_shifts = labels - outputs
+    labels_ratios = np.power(2, labels[:, 0] / 12)
+    corrections_ratios = np.power(2, correction_shifts[:, 0] / 12)
+
+    # plot the shifts after applying them to the original frame indices
+    frame_outputs_0 = np.zeros(frames)
+    frame_labels_0 = np.zeros(frames)
+    frame_corrections_0 = np.zeros(frames)
+    for i in range(len(labels[:, 0])):
+        frame_outputs_0[original_boundaries[i, 0]: original_boundaries[i, 1]] += outputs[i, 0]
+        frame_labels_0[original_boundaries[i, 0]: original_boundaries[i, 1]] += labels[i, 0]
+        frame_corrections_0[original_boundaries[i, 0]: original_boundaries[i, 1]] -= correction_shifts[i, 0]
+    s1 = bplt.figure(title="Pitch shifts: ground truth, predictions, and shift (ground truth is zero if autotuning")
+    s1.line(np.arange(len(frame_labels_0)), frame_labels_0, color="green")
+    s1.line(np.arange(len(frame_outputs_0)), frame_outputs_0, color="blue")
+    s1.line(np.arange(len(frame_corrections_0)), frame_corrections_0, color="orange")
+    bplt.save(s1, filename=os.path.join(output_dir, "plot_" + perf + ".html"))
+
+    # shift pitch to get the de-tuned input to the neural net, then apply correction (negative of learned shift)
+    shifted_pitch_track_0 = np.copy(pitch_track)
+    corrected_pitch_track_0 = np.copy(pitch_track)
+    for i in range(len(labels[:, 0])):
+        shifted_pitch_track_0[original_boundaries[i, 0]: original_boundaries[i, 1]] *= \
+                    np.power(2, max_semitone * labels[i, 0] / 12.0)
+        corrected_pitch_track_0[original_boundaries[i, 0]: original_boundaries[i, 1]] *= \
+                    np.power(2, max_semitone * (labels[i, 0] - outputs[i, 0]) / 12.0)
+    s1 = bplt.figure(title="Pitch tracks: ground truth, predictions, and shift (ground truth is zero if autotuning")
+    s1.line(np.arange(len(shifted_pitch_track_0)), shifted_pitch_track_0, color="green")
+    s1.line(np.arange(len(corrected_pitch_track_0)), corrected_pitch_track_0, color="orange")
+    bplt.save(s1, filename=os.path.join(output_dir, "plot_pyin" + perf + ".html"))
+
+    # do the same with the audio
+    shifted_audio = np.copy(vocal_audio)
+    corrected_audio = np.copy(vocal_audio)
+    margin = 1
+    for i in range(len(labels[:, 0])):
+        if i == 0:
+            start_sample = max((original_boundaries[i, 0] - margin) * hopSize, 0)
+        else:
+            start_sample = max((original_boundaries[i, 0] - margin) * hopSize, original_boundaries[i - 1, 1] * hopSize)
+        if i == len(original_boundaries) - 1:
+            end_sample = min((original_boundaries[i, 1] + margin) * hopSize, len(vocal_audio))
+        else:
+            end_sample = min((original_boundaries[i, 1] + margin) * hopSize, original_boundaries[i + 1, 0] * hopSize)
+        start_sample = int(start_sample)
+        end_sample = int(end_sample)
+        # get shifted audio
+        temp_shifted = psola_shift_pitch(
+            vocal_audio[start_sample: end_sample], fs=global_fs, f_ratio_list=[labels_ratios[i]])[0]
+        temp_shifted[0: margin * hopSize] *= np.linspace(0, 1, margin * hopSize)
+        temp_shifted[-margin * hopSize: -1] *= np.linspace(1, 0, margin * hopSize - 1)
+        shifted_audio[start_sample: start_sample + margin * hopSize] *= np.linspace(1, 0, margin * hopSize)
+        shifted_audio[end_sample - margin * hopSize: end_sample] *= np.linspace(0, 1, margin * hopSize)
+        shifted_audio[start_sample + margin * hopSize: end_sample - margin * hopSize] = 0
+        shifted_audio[start_sample: end_sample] += temp_shifted
+        # get corrected audio
+        temp_corrected = psola_shift_pitch(
+            vocal_audio[start_sample: end_sample], fs=global_fs, f_ratio_list=[corrections_ratios[i]])[0]
+        temp_corrected[0: margin * hopSize] *= np.linspace(0, 1, margin * hopSize)
+        temp_corrected[-margin * hopSize: -1] *= np.linspace(1, 0, margin * hopSize - 1)
+        corrected_audio[start_sample: start_sample + margin * hopSize] *= np.linspace(1, 0, margin * hopSize)
+        corrected_audio[end_sample - margin * hopSize: end_sample] *= np.linspace(0, 1, margin * hopSize)
+        corrected_audio[start_sample + margin * hopSize: end_sample - margin * hopSize] = 0
+        corrected_audio[start_sample: end_sample] += temp_corrected
+
+    min_len = min([len(backing_audio), len(shifted_audio)])
+    shifted_mix = np.array(shifted_audio[:min_len]) + backing_audio[:min_len]
+    corrected_mix = np.array(corrected_audio[:min_len]) + backing_audio[:min_len]
+
+    librosa.output.write_wav(shifted_mix_fpath, shifted_mix, sr=global_fs, norm=True)
+    librosa.output.write_wav(corrected_mix_fpath, corrected_mix, sr=global_fs, norm=True)
