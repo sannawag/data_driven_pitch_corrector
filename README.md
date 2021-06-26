@@ -9,6 +9,8 @@ The program is trained on examples of in-tune singing and applies corrections al
 
 A pre-trained model is available.
 
+Note: this repository used to be named "autotuner", but has been renamed to "data-driven pitch corrector" to avoid confusion with the proprietary term "Antares Auto-Tune". 
+
 # Usage
 
 ## Requirements
@@ -32,12 +34,12 @@ Make sure to first download and uncompress the CQT zip file available at
 [http://homes.sice.indiana.edu/scwager/images/survive_4_back_cqt.npy.zip](http://homes.sice.indiana.edu/scwager/images/survive_4_back_cqt.npy.zip)
 and place it in `./Intonation/realworld_data/raw_audio/backing_tracks_wav`.
 
-More generally, the program can be run either for training, testing, or auto-tuning by setting
+More generally, the program can be run either for training, testing, or automatic pitch correction by setting
 the boolean args `--run_training`, `--run_training`, and `--run_autotune`.
 In the case of training and testing,
 the dataloader takes as input in-tune singing, detunes the notes of the vocal track, and learns to predict the 
 de-tuning amount. In the case
-of autotuning, the program takes as input real-world performances, predicts corrections for them, and
+of automatic pitch correction, the program takes as input real-world performances, predicts corrections for them, and
 synthesizes the output.
 
 Multiple other settings and parameters are available in the argument parser in `rnn.py`.
